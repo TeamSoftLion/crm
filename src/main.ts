@@ -1,13 +1,13 @@
-import { NestFactory } from '@nestjs/core';
+import { NestFactory, Reflector } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { AppLogger } from './common/logger/app.logger';
+import { RolesGuard } from './auth/guards/roles.guard';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   const logger = new AppLogger();
-
   app.useLogger(logger);
 
   app.useGlobalPipes(
@@ -17,11 +17,9 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
-
   app.useGlobalFilters(new HttpExceptionFilter());
 
-  const port = Number(process.env.PORT) || 3000;
-  await app.listen(port);
-  logger.log(`Server running on http://localhost:${port}`);
+  await app.listen(Number(process.env.PORT) || 3000);
+  logger.log(`Server http://localhost:${process.env.PORT || 3000}`);
 }
 bootstrap();
