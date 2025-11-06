@@ -1,4 +1,12 @@
-import { IsOptional, IsString } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  Min,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { GroupScheduleInput } from './schedule.dto';
 
 export class UpdateGroupDto {
   @IsOptional()
@@ -8,4 +16,12 @@ export class UpdateGroupDto {
   @IsOptional()
   @IsString()
   roomId?: string | null;
+  @IsInt()
+  @Min(1)
+  capacity: number;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => GroupScheduleInput)
+  schedule?: GroupScheduleInput;
 }

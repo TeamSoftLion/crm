@@ -14,6 +14,16 @@ enum Role {
   STUDENT
 }
 
+enum DayOfWeek {
+  MON
+  TUE
+  WED
+  THU
+  FRI
+  SAT
+  SUN
+}
+
 model User {
   id               String   @id @default(cuid())
   firstName        String
@@ -34,27 +44,13 @@ model User {
   @@index([isActive])
 }
 
-model Room {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  location  String?
-  capacity  Int?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
+model ManagerProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  groups Group[]
-}
-
-model Group {
-  id        String   @id @default(cuid())
-  name      String
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-
-  roomId String?
-  room   Room?   @relation(fields: [roomId], references: [id])
-
-  students StudentProfile[]
+  photoUrl      String?
+  monthlySalary Decimal @db.Decimal(10, 2)
 }
 
 model TeacherProfile {
@@ -79,11 +75,38 @@ model StudentProfile {
   group   Group?  @relation(fields: [groupId], references: [id])
 }
 
-model ManagerProfile {
-  id     String @id @default(cuid())
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+model Room {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  location  String?
+  capacity  Int? @default(10)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
 
-  photoUrl      String?
-  monthlySalary Decimal @db.Decimal(10, 2)
+  groups Group[]
+}
+
+model Group {
+  id        String   @id @default(cuid())
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  roomId    String?
+  room      Room?    @relation(fields: [roomId], references: [id])
+  capacity  Int
+  students  StudentProfile[]
+  schedule  GroupSchedule[]
+}
+
+
+model GroupSchedule {
+  id        String    @id @default(cuid())
+  day       DayOfWeek
+  startTime String // "HH:mm"
+  endTime   String // "HH:mm"
+  groupId   String
+  group     Group     @relation(fields: [groupId], references: [id])
+  createdAt DateTime  @default(now())
+
+  @@unique([groupId, day])
 }

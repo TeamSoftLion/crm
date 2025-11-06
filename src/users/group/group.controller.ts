@@ -9,7 +9,6 @@ import {
 } from '@nestjs/common';
 import { GroupService } from './group.service';
 import { CreateGroupDto } from './dto/create-group.dto';
-import { UpdateGroupDto } from './dto/update-group.dto';
 import { Role } from '@prisma/client';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
@@ -32,30 +31,18 @@ export class GroupController {
     return this.service.list();
   }
 
-  @Patch(':id')
+  @Patch(':id/schedule')
   @Roles(Role.ADMIN, Role.MANAGER)
-  update(@Param('id') id: string, @Body() dto: UpdateGroupDto) {
-    return this.service.update(id, dto);
-  }
-
-  @Patch(':id/deactivate')
-  @Roles(Role.ADMIN)
-  deactivate(@Param('id') id: string) {
-    return this.service.deactivate(id);
-  }
-
-  @Post(':groupId/assign-room/:roomId')
-  @Roles(Role.ADMIN, Role.MANAGER)
-  assignRoom(
-    @Param('groupId') groupId: string,
-    @Param('roomId') roomId: string,
+  replaceSchedule(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      mode: 'ODD' | 'EVEN' | 'CUSTOM';
+      startTime: string;
+      endTime: string;
+      days?: any[];
+    },
   ) {
-    return this.service.assignRoom(groupId, roomId);
-  }
-
-  @Post(':groupId/unassign-room')
-  @Roles(Role.ADMIN, Role.MANAGER)
-  unassignRoom(@Param('groupId') groupId: string) {
-    return this.service.unassignRoom(groupId);
+    return this.service.replaceSchedule(id, body as any);
   }
 }
