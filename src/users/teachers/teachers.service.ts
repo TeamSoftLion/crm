@@ -1,146 +1,216 @@
-import {
-  ConflictException,
-  Injectable,
-  BadRequestException,
-  NotFoundException,
-} from '@nestjs/common';
-import * as argon2 from 'argon2';
-import { Prisma, Role } from '@prisma/client';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateTeacherDto } from './dto/create-teacher.dto';
-import { PrismaService } from 'prisma/prisma.service';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
+import { QueryTeacherDto } from './dto/query-teacher.dto';
+import {
+  assertPaySchemeXor,
+  assertPercentRange,
+  assertPhoneUniqueIfProvided,
+  assertUserExists,
+  ensureCreateVariantValid,
+  normalizePhone,
+} from './policies/teacher.policies';
+import * as bcrypt from 'bcrypt';
+import { Role } from '@prisma/client';
+import { PrismaService } from 'prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class TeachersService {
   constructor(private prisma: PrismaService) {}
 
+  private toDecimal = (v?: string | number | null) =>
+    v === undefined
+      ? undefined
+      : v === null
+        ? null
+        : new Prisma.Decimal(v as any);
+
+  private toView(row: any) {
+    return {
+      id: row.id,
+      userId: row.user.id,
+      fullName: `${row.user.firstName} ${row.user.lastName}`,
+      phone: row.user.phone,
+      isActive: row.user.isActive,
+      photoUrl: row.photoUrl ?? null,
+      monthlySalary: row.monthlySalary?.toString() ?? null,
+      percentShare: row.percentShare?.toString() ?? null,
+      createdAt: row.user.createdAt,
+    };
+  }
+
   async create(dto: CreateTeacherDto) {
-    if (dto.monthlySalary == null && dto.percentShare == null) {
-      throw new BadRequestException(
-        'Provide either monthlySalary or percentShare',
-      );
-    }
-    if (dto.monthlySalary != null && dto.percentShare != null) {
-      throw new BadRequestException(
-        'Choose only one: monthlySalary OR percentShare',
-      );
-    }
+    ensureCreateVariantValid(dto);
+    assertPercentRange(dto.percentShare);
+    assertPaySchemeXor(dto, { requireOne: true });
 
-    const exists = await this.prisma.user.findUnique({
-      where: { phone: dto.phone },
-    });
-    if (exists) throw new ConflictException('Phone already used');
+    const phone = normalizePhone(dto.phone);
+    await assertPhoneUniqueIfProvided(this.prisma, phone);
+    const passwordHash = await bcrypt.hash(dto.password!, 10);
 
-    const passwordHash = await argon2.hash(dto.password);
-
-    return this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          phone: dto.phone,
+          firstName: dto.firstName!,
+          lastName: dto.lastName!,
+          phone: phone!,
           passwordHash,
           role: Role.TEACHER,
-        },
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          phone: true,
-          role: true,
+          isActive: true,
         },
       });
 
-      await tx.teacherProfile.create({
+      const tp = await tx.teacherProfile.create({
         data: {
           userId: user.id,
           photoUrl: dto.photoUrl,
-          monthlySalary: dto.monthlySalary ?? null,
-          percentShare: dto.percentShare ?? null,
+          monthlySalary: dto.monthlySalary
+            ? this.toDecimal(dto.monthlySalary)
+            : null,
+          percentShare: dto.percentShare
+            ? this.toDecimal(dto.percentShare)
+            : null,
         },
+        include: { user: true },
       });
 
-      return user;
+      return tp;
     });
+
+    return this.toView(created);
   }
 
-  list() {
-    return this.prisma.user.findMany({
-      where: { role: Role.TEACHER, isActive: true },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        createdAt: true,
+  async findAll(q: QueryTeacherDto) {
+    const { search, isActive, page = 1, limit = 10 } = q;
+
+    const where: any = {
+      user: {
+        ...(isActive !== undefined
+          ? { isActive: String(isActive) === 'true' }
+          : {}),
       },
-      orderBy: { createdAt: 'desc' },
-    });
-  }
-  async update(userId: string, dto: UpdateTeacherDto) {
-    if (dto.monthlySalary != null && dto.percentShare != null)
-      throw new BadRequestException(
-        'Provide only one of monthlySalary or percentShare',
-      );
+    };
 
-    if (dto.phone) {
-      const exists = await this.prisma.user.findUnique({
-        where: { phone: dto.phone },
-      });
-      if (exists && exists.id !== userId)
-        throw new ConflictException('Phone already used');
+    if (search?.trim()) {
+      const s = search.trim();
+      where.user = {
+        ...(where.user ?? {}),
+        OR: [
+          { firstName: { contains: s, mode: 'insensitive' } },
+          { lastName: { contains: s, mode: 'insensitive' } },
+          { phone: { contains: s, mode: 'insensitive' } },
+        ],
+      };
     }
 
-    const teacher = await this.prisma.user.findUnique({
-      where: { id: userId, role: Role.TEACHER },
-      select: { id: true },
-    });
-    if (!teacher) throw new NotFoundException('Teacher not found');
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.teacherProfile.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { user: { createdAt: 'desc' } },
+        include: { user: true },
+      }),
+      this.prisma.teacherProfile.count({ where }),
+    ]);
 
-    const tx = this.prisma.$transaction.bind(this.prisma);
-    return tx(async (trx: Prisma.TransactionClient) => {
-      const dataUser: any = {
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        phone: dto.phone,
-      };
-      if (dto.password) dataUser.passwordHash = await argon2.hash(dto.password);
-
-      await trx.user.update({ where: { id: userId }, data: dataUser });
-
-      await trx.teacherProfile.update({
-        where: { userId },
-        data: {
-          photoUrl: dto.photoUrl,
-          monthlySalary:
-            dto.monthlySalary ??
-            (dto.monthlySalary === null ? null : undefined),
-          percentShare:
-            dto.percentShare ?? (dto.percentShare === null ? null : undefined),
-        },
-      });
-
-      return trx.user.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          phone: true,
-          role: true,
-        },
-      });
-    });
+    return {
+      meta: { page, limit, total, pages: Math.ceil(total / limit) },
+      items: rows.map((r) => this.toView(r)),
+    };
   }
 
-  async remove(userId: string) {
-    const u = await this.prisma.user.findUnique({
-      where: { id: userId, role: Role.TEACHER },
+  async findOne(id: string) {
+    const row = await this.prisma.teacherProfile.findUnique({
+      where: { id },
+      include: { user: true },
     });
-    if (!u) throw new NotFoundException('Teacher not found');
-    await this.prisma.user.delete({
-      where: { id: userId },
+    if (!row) throw new NotFoundException('Teacher topilmadi');
+    return this.toView(row);
+  }
+
+  async update(id: string, dto: UpdateTeacherDto) {
+    const prev = await this.prisma.teacherProfile.findUnique({
+      where: { id },
+      include: { user: true },
     });
-    return { success: true };
+    if (!prev) throw new NotFoundException('Teacher topilmadi');
+
+    assertPercentRange(dto.percentShare);
+    assertPaySchemeXor(dto, { requireOne: false });
+
+    const userData: any = {};
+    if (dto.firstName) userData.firstName = dto.firstName.trim();
+    if (dto.lastName) userData.lastName = dto.lastName.trim();
+    if (dto.phone) {
+      const phone = normalizePhone(dto.phone);
+      await assertPhoneUniqueIfProvided(this.prisma, phone, prev.userId);
+      userData.phone = phone;
+    }
+    if (dto.password)
+      userData.passwordHash = await bcrypt.hash(dto.password, 10);
+    if (typeof dto.isActive === 'boolean') userData.isActive = dto.isActive;
+
+    const tpData: any = {};
+    if (dto.photoUrl !== undefined) tpData.photoUrl = dto.photoUrl;
+
+    if (dto.monthlySalary !== undefined) {
+      tpData.monthlySalary =
+        dto.monthlySalary === null ? null : this.toDecimal(dto.monthlySalary);
+      tpData.percentShare = null;
+    }
+    if (dto.percentShare !== undefined) {
+      tpData.percentShare =
+        dto.percentShare === null ? null : this.toDecimal(dto.percentShare);
+      tpData.monthlySalary = null;
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (Object.keys(userData).length) {
+        await tx.user.update({ where: { id: prev.userId }, data: userData });
+      }
+      if (Object.keys(tpData).length) {
+        await tx.teacherProfile.update({ where: { id }, data: tpData });
+      }
+      return tx.teacherProfile.findUnique({
+        where: { id },
+        include: { user: true },
+      });
+    });
+
+    return this.toView(updated!);
+  }
+
+  // Soft-deactivate: user.isActive=false
+  async remove(id: string) {
+    const prev = await this.prisma.teacherProfile.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+    if (!prev) throw new NotFoundException('Teacher topilmadi');
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: prev.userId },
+      data: { isActive: false },
+    });
+
+    return this.toView({ ...prev, user: updatedUser });
+  }
+
+  // Restore
+  async restore(id: string) {
+    const prev = await this.prisma.teacherProfile.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+    if (!prev) throw new NotFoundException('Teacher topilmadi');
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: prev.userId },
+      data: { isActive: true },
+    });
+
+    return this.toView({ ...prev, user: updatedUser });
   }
 }

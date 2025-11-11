@@ -1,30 +1,40 @@
 import {
-  IsNumber,
   IsOptional,
-  IsPhoneNumber,
   IsString,
-  IsUrl,
-  Max,
-  Min,
-  ValidateIf,
+  MinLength,
+  IsNumberString,
+  Matches,
 } from 'class-validator';
 
 export class CreateTeacherDto {
-  @IsString() firstName: string;
-  @IsString() lastName: string;
-  @IsPhoneNumber('UZ') phone: string;
-  @IsString() password: string;
-  @IsOptional() @IsUrl() photoUrl?: string;
-  @ValidateIf((o) => o.percentShare == null)
   @IsOptional()
-  @IsNumber()
-  @Min(0)
-  monthlySalary?: number;
+  @IsString()
+  @MinLength(2)
+  firstName?: string;
 
-  @ValidateIf((o) => o.monthlySalary == null)
   @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  percentShare?: number;
+  @IsString()
+  @MinLength(2)
+  lastName?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
+  password?: string;
+
+  @IsOptional()
+  @IsString()
+  photoUrl?: string;
+
+  @IsOptional()
+  @IsNumberString()
+  monthlySalary?: string;
+
+  @IsOptional()
+  @Matches(/^\d{1,3}(\.\d{1,2})?$/)
+  percentShare?: string;
 }
