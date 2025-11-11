@@ -13,6 +13,11 @@ enum Role {
   TEACHER
   STUDENT
 }
+enum TeacherRole {
+  LEAD  //Asosiy o‘qituvchi
+  ASSISTANT //Yordamchi
+  SUBSTITUTE //O‘rinbosar (vaqtinchalik)
+}
 
 enum DayOfWeek {
   MON
@@ -66,6 +71,40 @@ model TeacherProfile {
   photoUrl      String?
   monthlySalary Decimal? @db.Decimal(10, 2)
   percentShare  Decimal? @db.Decimal(5, 2) 
+  teachingAssignment TeachingAssignment[]
+}
+
+model TeachingAssignment {
+  id          String       @id @default(uuid())
+  teacherId   String
+  groupId     String
+  fromDate    DateTime
+  toDate      DateTime?
+
+  role        TeacherRole  @default(LEAD)
+
+  inheritSchedule Boolean  @default(true)
+  daysPatternOverride DaysPattern?
+  startMinutesOverride Int?
+  endMinutesOverride   Int?
+
+  isActive    Boolean     @default(true)
+  assignedBy  String?
+  note        String?
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deactivatedAt DateTime?
+  deactivatedBy String?
+  deactivateReason String?
+
+  teacher     TeacherProfile @relation(fields: [teacherId], references: [id])
+  group       Group          @relation(fields: [groupId], references: [id])
+
+  @@index([teacherId, isActive])
+  @@index([groupId, isActive])
+  @@index([fromDate])
+  @@index([toDate])
 }
 
 model StudentProfile {
@@ -104,6 +143,7 @@ model Group {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   enrollments Enrollment[]
+  teachingAssignment TeachingAssignment[]
   @@index([roomId, daysPattern, isActive])
   @@unique([name, isActive])
 }

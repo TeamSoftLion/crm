@@ -10,6 +10,7 @@ import { RoomsModule } from './users/room/rooms.module';
 import { GroupModule } from './users/group/group.module';
 import { EnrollmentsModule } from './enrollments/enrollments.module';
 import { StudentsModule } from './users/students/students.module';
+import { TeachingAssignmentsModule } from './users/teaching-assignments/teaching-assignments.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { StudentsModule } from './users/students/students.module';
     RoomsModule,
     GroupModule,
     EnrollmentsModule,
+    TeachingAssignmentsModule,
   ],
 })
 export class AppModule {}
