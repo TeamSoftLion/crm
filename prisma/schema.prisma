@@ -32,11 +32,24 @@ enum DaysPattern {
   ODD   // Du/Cho/Ju
   EVEN  // Se/Pa/Sha
 }
+
 enum EnrollmentStatus {
   ACTIVE
   PAUSED
   LEFT
 }
+
+enum SheetStatus { 
+  OPEN 
+  LOCKED 
+}
+enum AttendanceStatus { 
+  PRESENT //Darsda ishtirok etgan
+  ABSENT //Umuman kelmagan
+  LATE //Kechikib kelgan
+  EXCUSED //Uzrli sabab bilan kelmagan
+}
+
 
 model User {
   id               String   @id @default(cuid())
@@ -114,6 +127,7 @@ model StudentProfile {
   dateOfBirth DateTime?
   startDate   DateTime?
   enrollments Enrollment[]
+  attendance    Attendance[]
 }
 model Room {
   id        String   @id @default(uuid())
@@ -123,6 +137,7 @@ model Room {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   groups Group[]
+  
 }
 
 
@@ -143,6 +158,7 @@ model Group {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   enrollments Enrollment[]
+  sheet AttendanceSheet[]
   teachingAssignment TeachingAssignment[]
   @@index([roomId, daysPattern, isActive])
   @@unique([name, isActive])
@@ -162,4 +178,40 @@ model Enrollment {
   group      Group             @relation(fields: [groupId], references: [id])
 
   @@index([studentId, groupId])
+}
+
+model Attendance {
+  id         String           @id @default(uuid())
+  sheetId    String
+  studentId  String           
+  status     AttendanceStatus
+  markedBy   String?          
+  markedAt   DateTime?
+  note       String?
+
+  sheet      AttendanceSheet  @relation(fields: [sheetId], references: [id])
+  student    StudentProfile   @relation(fields: [studentId], references: [id])
+
+  @@unique([sheetId, studentId])
+  @@index([studentId, status])
+}
+
+model AttendanceSheet {
+  id            String       @id @default(uuid())
+  groupId       String
+  date          DateTime     
+  startMinutes  Int          
+  endMinutes    Int
+  teacherAssignId String?    
+  status        SheetStatus  @default(OPEN)
+  note          String?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  group         Group    @relation(fields: [groupId], references: [id])
+  attendance    Attendance[]
+
+  @@unique([groupId, date]) // bir guruh + bir kun = bitta varaq
+  @@index([date])
 }
