@@ -12,7 +12,7 @@ import {
   assertNoDuplicateActive,
   assertStudentExists,
 } from './policies/enrollment.policies';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class EnrollmentsService {

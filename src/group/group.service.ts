@@ -9,7 +9,7 @@ import { QueryGroupDto } from './dto/query-group.dto';
 import { assertActiveNameUnique } from './policies/name-unique.policy';
 import { assertGroupCapacityLTEToRoom } from './policies/capacity-vs-room.policy';
 import { assertNoRoomScheduleConflict } from './policies/schedule-conflict.policy';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { hhmmToMinutes, minutesToHhmm } from 'src/common/utils/time.util';
 import { EnrollmentStatus } from '@prisma/client';
 

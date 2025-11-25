@@ -13,7 +13,7 @@ import {
   assertTeacherExists,
   resolveEffectiveSchedule,
 } from './policies/ta.policies';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { minutesToHhmm } from 'src/common/utils/time.util';
 import { Prisma } from '@prisma/client';
 

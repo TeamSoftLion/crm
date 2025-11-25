@@ -5,7 +5,7 @@ import { AttendanceStatus, AttendanceSheetStatus } from '@prisma/client';
 import { GetGroupSheetDto } from './dto/get-group-sheet.dto';
 import { BulkUpdateAttendanceDto } from './dto/bulk-update-attendance.dto';
 import { TeacherAttendancePolicy } from './policies/teacher-attendance.policy';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class AttendanceService {

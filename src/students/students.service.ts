@@ -10,7 +10,7 @@ import {
 } from './policies/student.policies';
 import * as bcrypt from 'bcrypt';
 import { Role } from '@prisma/client';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import * as argon2 from 'argon2';
 
 @Injectable()

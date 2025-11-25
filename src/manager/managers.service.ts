@@ -6,7 +6,7 @@ import {
 import * as argon2 from 'argon2';
 import { Prisma, Role } from '@prisma/client';
 import { CreateManagerDto } from './dto/create-manager.dto';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateManagerDto } from './dto/update-manager.dto';
 
 @Injectable()

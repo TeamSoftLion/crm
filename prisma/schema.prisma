@@ -92,7 +92,7 @@ model TeacherProfile {
 }
 
 model TeachingAssignment {
-  id          String       @id @default(uuid())
+  id          String       @id @default(cuid())
   teacherId   String
   groupId     String
   fromDate    DateTime
@@ -134,7 +134,7 @@ model StudentProfile {
   attendance    AttendanceRecord[]
 }
 model Room {
-  id        String   @id @default(uuid())
+  id        String   @id @default(cuid())
   name      String   @unique
   capacity  Int
   isActive  Boolean  @default(true)
@@ -146,7 +146,7 @@ model Room {
 
 
 model Group {
-  id             String      @id @default(uuid())
+  id             String      @id @default(cuid())
   name           String
   capacity       Int
   daysPattern    DaysPattern
@@ -169,7 +169,7 @@ model Group {
 }
 
 model Enrollment {
-  id         String            @id @default(uuid())
+  id         String            @id @default(cuid())
   studentId  String
   groupId    String
   joinDate   DateTime

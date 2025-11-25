@@ -15,7 +15,7 @@ import {
 } from './policies/teacher.policies';
 import * as bcrypt from 'bcrypt';
 import { Role } from '@prisma/client';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { dateOnlyUTC } from 'src/attendance/utils/schedule.util';

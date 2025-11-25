@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class RoomsService {
@@ -31,11 +31,17 @@ export class RoomsService {
   }
 
   async getAll() {
-    return await this.prisma.room.findMany({
+    return this.prisma.room.findMany({
       select: {
+        id: true,
         name: true,
         capacity: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
       },
+      where: { isActive: true },
+      orderBy: { createdAt: 'asc' },
     });
   }
 
