@@ -34,25 +34,31 @@ export class AuthService {
     role: Role;
     isActive: boolean;
   }) {
-    const payload: AuthJwtPayload = {
+    const now = Math.floor(Date.now() / 1000);
+
+    const accessPayload = {
       sub: user.id,
       role: user.role,
       isActive: user.isActive,
+      exp: now + 60 * 15, // 15 min
+    };
+
+    const refreshPayload = {
+      sub: user.id,
+      exp: now + 60 * 60 * 24 * 7, // 7 kun
     };
 
     const accessToken = await this.jwt.signAsync(
-      { ...payload },
+      JSON.stringify(accessPayload),
       {
-        secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
-        expiresIn: this.config.get<string>('JWT_ACCESS_EXPIRES', '15m'),
+        secret: this.config.get<string>('JWT_ACCESS_SECRET'),
       },
     );
 
     const refreshToken = await this.jwt.signAsync(
-      { ...payload },
+      JSON.stringify(refreshPayload),
       {
-        secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
-        expiresIn: this.config.get<string>('JWT_REFRESH_EXPIRES', '7d'),
+        secret: this.config.get<string>('JWT_REFRESH_SECRET'),
       },
     );
 
