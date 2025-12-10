@@ -37,14 +37,17 @@ export class AuthController {
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { accessToken, refreshToken } = await this.auth.login(
+    const { accessToken, refreshToken, user } = await this.auth.login(
       dto.phone,
       dto.password,
     );
 
     res.cookie(REFRESH_COOKIE_NAME, refreshToken, refreshCookieOptions);
 
-    return { accessToken };
+    return {
+      accessToken,
+      user,
+    };
   }
 
   @Post('refresh')
