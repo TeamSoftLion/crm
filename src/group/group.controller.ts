@@ -47,7 +47,7 @@ export class GroupsController {
   }
 
   @Get(':id/students')
-  @Roles(Role.TEACHER)
+  @Roles(Role.TEACHER, Role.ADMIN, Role.MANAGER)
   @UseGuards(JwtAuthGuard)
   getStudents(@Param('id') id: string) {
     return this.groupsService.getGroupStudents(id);
