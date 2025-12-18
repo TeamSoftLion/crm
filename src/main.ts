@@ -27,7 +27,7 @@ async function bootstrap() {
 
   const allowedOrigins = [
     'http://localhost:5173',
-    'https://team-soft-ware-dslj.vercel.app',
+    'https://team-soft-crm.vercel.app',
   ];
 
   app.use((req, res, next) => {
