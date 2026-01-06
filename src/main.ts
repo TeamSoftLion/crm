@@ -20,47 +20,26 @@ async function bootstrap() {
   const logger = new AppLogger();
   app.use(cookieParser());
   app.useLogger(logger);
-  // app.enableCors({
-  //   origin: ['http://localhost:5173', 'https://team-soft-ware-fk6s.vercel.app'],
-  //   credentials: true, //cookie uchun majburiy
-  // });
-
   const allowedOrigins = [
     'http://localhost:5173',
     'https://team-soft-crm.vercel.app',
+    // kerak bo‘lsa preview domenni ham qo‘shasan:
+    // 'https://team-soft-q8tedhd9l-timurs-projects-7ecfe3bd.vercel.app',
   ];
 
-  app.use((req, res, next) => {
-    const origin = req.headers.origin as string | undefined;
-
-    if (origin && allowedOrigins.includes(origin)) {
-      res.header('Access-Control-Allow-Origin', origin);
-    }
-
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header(
-      'Access-Control-Allow-Headers',
-      'Origin, X-Requested-With, Content-Type, Accept, Authorization',
-    );
-    res.header(
-      'Access-Control-Allow-Methods',
-      'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    );
-
-    if (req.method === 'OPTIONS') {
-      // preflight so‘rovni shu yerning o‘zida yakunlaymiz
-      return res.sendStatus(204);
-    }
-
-    next();
-  });
-
-  // 2) Nest’ning CORS’ini ham yoqamiz, lekin origin dinamik (kelgan origin)
   app.enableCors({
-    origin: true,
-    credentials: true,
-  });
+    origin: (origin, callback) => {
+      // Postman/curl kabi origin bo‘lmagan so‘rovlarga ruxsat
+      if (!origin) return callback(null, true);
 
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+
+      return callback(new Error(`CORS blocked: ${origin}`), false);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
   const port = Number(process.env.PORT) || 3000;
   await app.listen(port);
 
