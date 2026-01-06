@@ -28,17 +28,8 @@ async function bootstrap() {
   ];
 
   app.enableCors({
-    origin: (origin, callback) => {
-      // Postman/curl kabi origin bo‘lmagan so‘rovlarga ruxsat
-      if (!origin) return callback(null, true);
-
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-
-      return callback(new Error(`CORS blocked: ${origin}`), false);
-    },
+    origin: allowedOrigins,
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
   });
   const port = Number(process.env.PORT) || 3000;
   await app.listen(port);
