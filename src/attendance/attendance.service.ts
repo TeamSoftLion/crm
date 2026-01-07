@@ -15,9 +15,8 @@ export class AttendanceService {
   ) {}
 
   private normalizeDate(dateStr: string): Date {
-    const d = new Date(dateStr);
-    d.setHours(0, 0, 0, 0);
-    return d;
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day));
   }
 
   async getOrCreateGroupSheetForTeacher(params: {
