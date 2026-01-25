@@ -125,26 +125,37 @@ export class EnrollmentsService {
     return e;
   }
 
-  // UPDATE: status/leaveDate
   async update(id: string, dto: UpdateEnrollmentDto) {
     const prev = await this.prisma.enrollment.findUnique({ where: { id } });
     if (!prev) throw new NotFoundException('Enrollment topilmadi');
 
-    // LEFT bo'layotgan bo'lsa leaveDate talab qilamiz (yoki avtomatik now)
-    let leaveDate = dto.leaveDate ? new Date(dto.leaveDate) : prev.leaveDate;
-    if (dto.status === 'LEFT' && !leaveDate) {
+    const status = dto.status ?? prev.status;
+
+    let leaveDate: Date | null = prev.leaveDate;
+
+    // ✅ DTO leaveDate kelsa parse qilamiz
+    if (dto.leaveDate) {
+      const parsed = new Date(dto.leaveDate);
+      if (isNaN(parsed.getTime())) {
+        throw new BadRequestException("leaveDate noto'g'ri formatda");
+      }
+      leaveDate = parsed;
+    }
+
+    // ✅ LEFT bo'lsa leaveDate majbur
+    if (status === 'LEFT' && !leaveDate) {
       leaveDate = new Date();
     }
-    if (dto.status === 'ACTIVE' && prev.status !== 'ACTIVE') {
-      await assertGroupActive(this.prisma, prev.groupId);
-      await assertNoDuplicateActive(this.prisma, prev.studentId, prev.groupId);
-      await assertGroupHasFreeSeat(this.prisma, prev.groupId);
+
+    // ✅ ACTIVE yoki PAUSED bo'lsa leaveDate bo'lmaydi
+    if (status === 'ACTIVE' || status === 'PAUSED') {
+      leaveDate = null;
     }
 
     const updated = await this.prisma.enrollment.update({
       where: { id },
       data: {
-        status: dto.status ?? prev.status,
+        status,
         leaveDate,
       },
     });
@@ -155,9 +166,10 @@ export class EnrollmentsService {
   async remove(id: string) {
     const e = await this.prisma.enrollment.findUnique({ where: { id } });
     if (!e) throw new NotFoundException('Enrollment topilmadi');
+
+    // ✅ leaveDate yubormasak ham bo‘ladi (update o‘zi now qo‘yadi)
     return this.update(id, {
       status: 'LEFT',
-      leaveDate: new Date().toISOString(),
     });
   }
 }

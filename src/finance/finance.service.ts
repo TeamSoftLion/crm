@@ -5,38 +5,132 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
-  PaymentStatus,
-  TuitionChargeStatus,
-  Prisma,
-  PaymentMethod,
   DaysPattern,
   Group,
+  PaymentMethod,
+  PaymentStatus,
+  Prisma,
+  TuitionChargeStatus,
 } from '@prisma/client';
+import { PrismaService } from 'prisma/prisma.service';
+
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { CreateExpenseDto } from './dto/create-expense.dto';
-import { PrismaService } from 'prisma/prisma.service';
 import { ApplyDiscountDto } from './dto/apply-discount.dto';
 
 @Injectable()
 export class FinanceService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Qarzni “ming so‘mga” yaxlitlab ko‘rsatish uchun (UI/Hisobot)
+   */
   private roundToThousand(amount: number): number {
     if (!Number.isFinite(amount)) return 0;
     return Math.round(amount / 1000) * 1000;
   }
 
+  /**
+   * Date dan vaqtni olib tashlash (00:00:00)
+   */
+  private stripTime(date: Date): Date {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  }
+
+  /**
+   * ODD (Du/Cho/Ju) yoki EVEN (Se/Pa/Sha) bo‘yicha
+   * oy ichidagi:
+   *  - plannedLessons = umumiy darslar
+   *  - chargedLessons = joinDate dan keyingi darslar
+   */
+  private calculateLessonsForMonth(
+    group: Group,
+    joinDate: Date,
+  ): { plannedLessons: number; chargedLessons: number } {
+    const daysPattern = group.daysPattern;
+
+    const year = joinDate.getFullYear();
+    const monthIndex = joinDate.getMonth(); // 0-11
+
+    const monthStart = new Date(year, monthIndex, 1);
+    const monthEnd = new Date(year, monthIndex + 1, 0);
+
+    // JS: Yakshanba=0, Du=1, Se=2, Cho=3, Pa=4, Ju=5, Sha=6
+    const oddDays = [1, 3, 5]; // Du / Cho / Ju
+    const evenDays = [2, 4, 6]; // Se / Pa / Sha
+
+    const targetWeekdays = daysPattern === DaysPattern.ODD ? oddDays : evenDays;
+
+    let plannedLessons = 0;
+    let chargedLessons = 0;
+
+    const join = this.stripTime(joinDate);
+
+    for (
+      let d = new Date(monthStart.getTime());
+      d <= monthEnd;
+      d.setDate(d.getDate() + 1)
+    ) {
+      const weekday = d.getDay();
+
+      if (targetWeekdays.includes(weekday)) {
+        plannedLessons++;
+
+        if (this.stripTime(d) >= join) {
+          chargedLessons++;
+        }
+      }
+    }
+
+    return { plannedLessons, chargedLessons };
+  }
+
+  /**
+   * ✅ “Kasrsiz” (qoldiqsiz) hisoblash:
+   *  - perLesson = floor(monthlyFee / plannedLessons)
+   *  - remainder = monthlyFee - perLesson*plannedLessons
+   *  - remainder yo‘qolmasligi uchun chargedLessons > 0 bo‘lsa qo‘shib yuboramiz
+   */
+  private calcAmountDueForJoinMonth(params: {
+    monthlyFee: number;
+    plannedLessons: number;
+    chargedLessons: number;
+  }): number {
+    const { monthlyFee, plannedLessons, chargedLessons } = params;
+
+    // fallback
+    if (!plannedLessons || plannedLessons <= 0) return Math.round(monthlyFee);
+    if (!chargedLessons || chargedLessons <= 0) return 0;
+
+    const perLesson = Math.floor(monthlyFee / plannedLessons);
+    const remainder = monthlyFee - perLesson * plannedLessons;
+
+    const base = perLesson * chargedLessons;
+
+    // remainder yo‘qolib ketmasin (kasr chiqmasin!)
+    const finalAmount = base + remainder;
+
+    return Math.round(finalAmount);
+  }
+
+  // =========================================================
+  // ✅ PAYMENT CREATE
+  // =========================================================
   async createPayment(dto: CreatePaymentDto, recordedById: string) {
-    // 1. Student tekshir
+    // 1) student check
     const student = await this.prisma.studentProfile.findUnique({
       where: { id: dto.studentId },
     });
-    if (!student) {
-      throw new NotFoundException('Student topilmadi');
-    }
+    if (!student) throw new NotFoundException('Student topilmadi');
 
-    // 2. Payment create
+    // 2) payment create
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+
+    if (!dto.amount || dto.amount <= 0) {
+      throw new BadRequestException(
+        'To‘lov summasi 0 dan katta bo‘lishi kerak',
+      );
+    }
 
     const payment = await this.prisma.payment.create({
       data: {
@@ -52,21 +146,18 @@ export class FinanceService {
       },
     });
 
-    // 3. Allocation – to‘lovni eski qarzlarga tarqatamiz
+    // 3) allocate
     await this.allocatePaymentToCharges(payment.id, dto.studentId, dto.groupId);
 
-    // 4. Yangilangan student summary qaytaramiz
+    // 4) summary
     const summary = await this.getStudentSummary(dto.studentId);
 
-    return {
-      payment,
-      summary,
-    };
+    return { payment, summary };
   }
 
-  //
-  // AYMENT → TUITIONCHARGE allocation
-  //
+  // =========================================================
+  // ✅ ALLOCATION: PAYMENT → TUITIONCHARGE
+  // =========================================================
   private async allocatePaymentToCharges(
     paymentId: string,
     studentId: string,
@@ -78,10 +169,8 @@ export class FinanceService {
     if (!payment) return;
 
     let remaining = payment.amount.toNumber();
-
     if (remaining <= 0) return;
 
-    // Unpaid / partially paid charges
     const charges = await this.prisma.tuitionCharge.findMany({
       where: {
         studentId,
@@ -97,13 +186,24 @@ export class FinanceService {
     for (const charge of charges) {
       if (remaining <= 0) break;
 
-      const allocatedSoFar = charge.allocations.reduce(
+      const paidSoFar = charge.allocations.reduce(
         (sum, a) => sum + a.amount.toNumber(),
         0,
       );
-      const outstanding = charge.amountDue.toNumber() - allocatedSoFar;
 
-      if (outstanding <= 0) continue;
+      // ✅ effective amount = amountDue - discount
+      const effectiveAmount =
+        charge.amountDue.toNumber() - charge.discount.toNumber();
+
+      const outstanding = effectiveAmount - paidSoFar;
+      if (outstanding <= 0) {
+        // agar allaqachon yopilgan bo‘lsa statusni PAID qilib qo‘yamiz
+        await this.prisma.tuitionCharge.update({
+          where: { id: charge.id },
+          data: { status: TuitionChargeStatus.PAID },
+        });
+        continue;
+      }
 
       const allocateAmount = Math.min(remaining, outstanding);
 
@@ -117,9 +217,10 @@ export class FinanceService {
 
       remaining -= allocateAmount;
 
-      // Charge status update
+      const newPaidTotal = paidSoFar + allocateAmount;
+
       const newStatus =
-        allocateAmount + allocatedSoFar >= charge.amountDue.toNumber()
+        newPaidTotal >= effectiveAmount
           ? TuitionChargeStatus.PAID
           : TuitionChargeStatus.PARTIALLY_PAID;
 
@@ -129,17 +230,23 @@ export class FinanceService {
       });
     }
 
-    // Agar remaining > 0 bo‘lsa – bu “oldindan to‘lov” sifatida qoladi
-    // hozircha uni alohida ko‘rmayapmiz, ammo keyin balansda hisobga olamiz.
+    // NOTE: remaining > 0 bo‘lsa — bu “advance payment”
+    // Hozircha uni alohida ledger sifatida saqlamayapmiz.
   }
 
-  //
-  // CHIQIM YARATISH
-  //
+  // =========================================================
+  // ✅ EXPENSE CREATE
+  // =========================================================
   async createExpense(dto: CreateExpenseDto, recordedById: string) {
+    if (!dto.amount || dto.amount <= 0) {
+      throw new BadRequestException(
+        'Chiqim summasi 0 dan katta bo‘lishi kerak',
+      );
+    }
+
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
 
-    const expense = await this.prisma.expense.create({
+    return this.prisma.expense.create({
       data: {
         title: dto.title,
         category: dto.category,
@@ -150,20 +257,16 @@ export class FinanceService {
         recordedById,
       },
     });
-
-    return expense;
   }
 
-  //
-  // STUDENT FINANCE SUMMARY
-  //
+  // =========================================================
+  // ✅ STUDENT SUMMARY
+  // =========================================================
   async getStudentSummary(studentId: string) {
     const student = await this.prisma.studentProfile.findUnique({
       where: { id: studentId },
     });
-    if (!student) {
-      throw new NotFoundException('Student topilmadi');
-    }
+    if (!student) throw new NotFoundException('Student topilmadi');
 
     const charges = await this.prisma.tuitionCharge.findMany({
       where: {
@@ -178,6 +281,7 @@ export class FinanceService {
       },
     });
 
+    // ✅ effective total = (amountDue - discount)
     const totalCharges = charges.reduce((sum, c) => {
       const amount = c.amountDue.toNumber();
       const discount = c.discount.toNumber();
@@ -201,6 +305,7 @@ export class FinanceService {
     });
 
     const totalPaid = allocationsAgg._sum.amount?.toNumber() ?? 0;
+
     const debt = totalCharges - totalPaid;
     const debtRounded = this.roundToThousand(debt);
 
@@ -220,24 +325,18 @@ export class FinanceService {
     };
   }
 
-  //
-  //  UMUMIY FINANCE OVERVIEW (oy/yil + method filter)
-  //
+  // =========================================================
+  // ✅ FINANCE OVERVIEW (period + method)
+  // =========================================================
   async getFinanceOverview(from: Date, to: Date, method?: PaymentMethod) {
     const incomeWhere: Prisma.PaymentWhereInput = {
       status: PaymentStatus.COMPLETED,
-      paidAt: {
-        gte: from,
-        lte: to,
-      },
+      paidAt: { gte: from, lte: to },
       ...(method ? { method } : {}),
     };
 
     const expenseWhere: Prisma.ExpenseWhereInput = {
-      paidAt: {
-        gte: from,
-        lte: to,
-      },
+      paidAt: { gte: from, lte: to },
       ...(method ? { method } : {}),
     };
 
@@ -263,50 +362,10 @@ export class FinanceService {
       profit: totalIncome - totalExpense,
     };
   }
-  private calculateLessonsForMonth(
-    group: Group,
-    joinDate: Date,
-  ): { plannedLessons: number; chargedLessons: number } {
-    const daysPattern = group.daysPattern;
 
-    const year = joinDate.getFullYear();
-    const monthIndex = joinDate.getMonth(); // 0-11
-
-    const monthStart = new Date(year, monthIndex, 1);
-    const monthEnd = new Date(year, monthIndex + 1, 0);
-
-    // JS'da: Yakshanba=0, Dushanba=1, ... Shanba=6
-    const oddDays = [1, 3, 5]; // Du / Cho / Ju
-    const evenDays = [2, 4, 6]; // Se / Pa / Sha
-
-    const targetWeekdays = daysPattern === DaysPattern.ODD ? oddDays : evenDays;
-
-    let plannedLessons = 0;
-    let chargedLessons = 0;
-
-    for (
-      let d = new Date(monthStart.getTime());
-      d <= monthEnd;
-      d.setDate(d.getDate() + 1)
-    ) {
-      const weekday = d.getDay(); // 0–6
-
-      if (targetWeekdays.includes(weekday)) {
-        plannedLessons += 1;
-
-        if (d >= this.stripTime(joinDate)) {
-          chargedLessons += 1;
-        }
-      }
-    }
-
-    return { plannedLessons, chargedLessons };
-  }
-
-  private stripTime(date: Date): Date {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  }
-
+  // =========================================================
+  // ✅ INITIAL TUITION CHARGE (Enrollment payti)
+  // =========================================================
   async createInitialTuitionChargeForEnrollment(params: {
     studentId: string;
     groupId: string;
@@ -314,7 +373,6 @@ export class FinanceService {
   }) {
     const { studentId, groupId, joinDate } = params;
 
-    // 1) Guruhni olaymiz (daysPattern + monthlyFee)
     const group = await this.prisma.group.findUnique({
       where: { id: groupId },
     });
@@ -342,20 +400,17 @@ export class FinanceService {
       joinDate,
     );
 
-    let amountDueNumber: number;
+    // ✅ 1) kasrsiz summa (butun so'm)
+    const rawAmountDueNumber = this.calcAmountDueForJoinMonth({
+      monthlyFee: group.monthlyFee,
+      plannedLessons,
+      chargedLessons,
+    });
 
-    if (!plannedLessons || plannedLessons <= 0) {
-      // Fallback: agar pattern bo‘yicha dars topolmasak, to‘liq summani yozamiz
-      amountDueNumber = group.monthlyFee;
-    } else {
-      const perLesson = group.monthlyFee / plannedLessons;
-      amountDueNumber = perLesson * chargedLessons;
-      amountDueNumber = Math.round(amountDueNumber); // so‘mga yaxlitlash
-    }
+    // ✅ 2) ENG MUHIM: endi DB ga ham 1000 so'mga karrali qilib yozamiz
+    const amountDueNumber = this.roundToThousand(rawAmountDueNumber);
 
     const amountDue = new Prisma.Decimal(amountDueNumber);
-
-    // Composite unique asosida upsert – bir oyga bitta hisob
 
     const charge = await this.prisma.tuitionCharge.upsert({
       where: {
@@ -366,6 +421,10 @@ export class FinanceService {
         discount: new Prisma.Decimal(0),
         plannedLessons,
         chargedLessons,
+        status:
+          amountDueNumber === 0
+            ? TuitionChargeStatus.PAID
+            : TuitionChargeStatus.PENDING,
       },
       create: {
         studentId,
@@ -376,6 +435,10 @@ export class FinanceService {
         discount: new Prisma.Decimal(0),
         plannedLessons,
         chargedLessons,
+        status:
+          amountDueNumber === 0
+            ? TuitionChargeStatus.PAID
+            : TuitionChargeStatus.PENDING,
       },
     });
 
@@ -384,7 +447,7 @@ export class FinanceService {
       groupId,
       year,
       month,
-      amountDue: amountDueNumber,
+      amountDue: amountDueNumber, // ✅ endi minglik karrali
       plannedLessons,
       chargedLessons,
     });
@@ -392,8 +455,10 @@ export class FinanceService {
     return charge;
   }
 
+  // =========================================================
+  // ✅ GLOBAL BALANCE
+  // =========================================================
   async getGlobalBalance() {
-    // 1) Barcha charge'lar bo‘yicha effective summa (amount - discount)
     const charges = await this.prisma.tuitionCharge.findMany({});
     const totalCharges = charges.reduce((sum, c) => {
       const base = c.amountDue.toNumber();
@@ -401,7 +466,6 @@ export class FinanceService {
       return sum + (base - discount);
     }, 0);
 
-    // 2) Jami to‘langan (allocation bo‘yicha)
     const allocAgg = await this.prisma.paymentAllocation.aggregate({
       _sum: { amount: true },
     });
@@ -410,14 +474,12 @@ export class FinanceService {
     const totalDebt = totalCharges - totalAllocated;
     const totalDebtRounded = this.roundToThousand(totalDebt);
 
-    // 3) Naxt kirim (Payment jadvali bo‘yicha)
     const incomeAgg = await this.prisma.payment.aggregate({
       _sum: { amount: true },
       where: { status: PaymentStatus.COMPLETED },
     });
     const totalIncome = incomeAgg._sum.amount?.toNumber() ?? 0;
 
-    // 4) Chiqimlar
     const expenseAgg = await this.prisma.expense.aggregate({
       _sum: { amount: true },
     });
@@ -426,15 +488,18 @@ export class FinanceService {
     const netCash = totalIncome - totalExpense;
 
     return {
-      totalCharges, // yozilgan hisoblar jami (chegirmadan keyin)
-      totalIncome, // to‘langan pul jami
-      totalExpense, // chiqimlar jami
-      netCash, // kassadagi sof pul (teorik)
-      totalDebt, // hozirgi umumiy qarzdorlik
+      totalCharges,
+      totalIncome,
+      totalExpense,
+      netCash,
+      totalDebt,
       totalDebtRounded,
     };
   }
 
+  // =========================================================
+  // ✅ DEBTORS LIST
+  // =========================================================
   async getDebtors(minDebt = 0) {
     const charges = await this.prisma.tuitionCharge.findMany({
       where: {
@@ -444,9 +509,7 @@ export class FinanceService {
       },
       include: {
         allocations: true,
-        student: {
-          include: { user: true },
-        },
+        student: { include: { user: true } },
         group: true,
       },
     });
@@ -464,9 +527,7 @@ export class FinanceService {
     >();
 
     for (const c of charges) {
-      const base = c.amountDue.toNumber();
-      const discount = c.discount.toNumber();
-      const effective = base - discount;
+      const effective = c.amountDue.toNumber() - c.discount.toNumber();
 
       const paid = c.allocations.reduce(
         (sum, a) => sum + a.amount.toNumber(),
@@ -476,12 +537,11 @@ export class FinanceService {
       const debt = effective - paid;
       if (debt <= 0) continue;
 
-      const studentId = c.studentId;
-      const key = studentId;
+      const key = c.studentId;
 
       if (!map.has(key)) {
         map.set(key, {
-          studentId,
+          studentId: c.studentId,
           fullName: `${c.student.user.firstName} ${c.student.user.lastName}`,
           phone: c.student.user.phone,
           totalDebt: 0,
@@ -493,6 +553,7 @@ export class FinanceService {
       const item = map.get(key)!;
       item.totalDebt += debt;
       item.totalDebtRounded = this.roundToThousand(item.totalDebt);
+
       item.groups.push({
         groupId: c.groupId,
         name: c.group.name,
@@ -500,13 +561,14 @@ export class FinanceService {
       });
     }
 
-    const result = Array.from(map.values())
+    return Array.from(map.values())
       .filter((x) => x.totalDebt >= minDebt)
       .sort((a, b) => b.totalDebt - a.totalDebt);
-
-    return result;
   }
 
+  // =========================================================
+  // ✅ APPLY DISCOUNT
+  // =========================================================
   async applyDiscount(dto: ApplyDiscountDto) {
     const charge = await this.prisma.tuitionCharge.findUnique({
       where: {
@@ -526,6 +588,10 @@ export class FinanceService {
 
     const amountDue = charge.amountDue.toNumber();
 
+    if (dto.discountAmount < 0) {
+      throw new BadRequestException('Chegirma manfiy bo‘lishi mumkin emas');
+    }
+
     if (dto.discountAmount > amountDue) {
       throw new BadRequestException(
         'Chegirma summasi hisobdan katta bo‘lishi mumkin emas',
@@ -534,13 +600,15 @@ export class FinanceService {
 
     const discount = new Prisma.Decimal(dto.discountAmount);
 
-    // mavjud to‘lovlar bilan statusni qayta hisoblash
+    // ✅ paid total
     const paid = charge.allocations.reduce(
       (sum, a) => sum + a.amount.toNumber(),
       0,
     );
 
+    // ✅ effective = amountDue - discount
     const effectiveAmount = amountDue - dto.discountAmount;
+
     const status =
       paid >= effectiveAmount
         ? TuitionChargeStatus.PAID
