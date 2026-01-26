@@ -1,11 +1,14 @@
-// src/attendance/attendance.service.ts
-
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { AttendanceStatus, AttendanceSheetStatus } from '@prisma/client';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { AttendanceStatus, AttendanceSheetStatus, Role } from '@prisma/client';
 import { GetGroupSheetDto } from './dto/get-group-sheet.dto';
 import { BulkUpdateAttendanceDto } from './dto/bulk-update-attendance.dto';
 import { TeacherAttendancePolicy } from './policies/teacher-attendance.policy';
 import { PrismaService } from '../../prisma/prisma.service';
+import { GetGroupMonthSheetsDto } from './dto/get-group-month-sheets.dto';
 
 @Injectable()
 export class AttendanceService {
@@ -19,6 +22,23 @@ export class AttendanceService {
     return new Date(Date.UTC(year, month - 1, day));
   }
 
+  private monthRangeUtc(monthStr: string): {
+    start: Date;
+    endExclusive: Date;
+    yyyy: number;
+    mm: number;
+  } {
+    // "YYYY-MM"
+    const [y, m] = monthStr.split('-').map(Number);
+    if (!y || !m || m < 1 || m > 12) {
+      throw new Error('month formati noto‘g‘ri. Masalan: 2026-01');
+    }
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const endExclusive = new Date(Date.UTC(y, m, 1));
+    return { start, endExclusive, yyyy: y, mm: m };
+  }
+
+  // ... sizning mavjud metodlaringiz
   async getOrCreateGroupSheetForTeacher(params: {
     teacherUserId: string;
     groupId: string;
@@ -46,17 +66,11 @@ export class AttendanceService {
         records: {
           include: {
             student: {
-              include: {
-                user: true,
-              },
+              include: { user: true },
             },
           },
         },
-        group: {
-          include: {
-            room: true,
-          },
-        },
+        group: { include: { room: true } },
       },
     });
 
@@ -72,18 +86,10 @@ export class AttendanceService {
         include: {
           records: {
             include: {
-              student: {
-                include: {
-                  user: true,
-                },
-              },
+              student: { include: { user: true } },
             },
           },
-          group: {
-            include: {
-              room: true,
-            },
-          },
+          group: { include: { room: true } },
         },
       });
     }
@@ -94,7 +100,6 @@ export class AttendanceService {
     });
 
     const existingStudentIds = new Set(sheet.records.map((r) => r.studentId));
-
     const missing = enrollments.filter(
       (e) => !existingStudentIds.has(e.studentId),
     );
@@ -113,18 +118,10 @@ export class AttendanceService {
         include: {
           records: {
             include: {
-              student: {
-                include: {
-                  user: true,
-                },
-              },
+              student: { include: { user: true } },
             },
           },
-          group: {
-            include: {
-              room: true,
-            },
-          },
+          group: { include: { room: true } },
         },
       });
     }
@@ -180,9 +177,7 @@ export class AttendanceService {
     this.teacherPolicy.ensureSheetIsOpenOrThrow(sheet);
 
     const items = dto.items ?? [];
-    if (items.length === 0) {
-      return { success: true };
-    }
+    if (items.length === 0) return { success: true };
 
     await this.prisma.$transaction(
       items.map((item) =>
@@ -210,5 +205,87 @@ export class AttendanceService {
     );
 
     return { success: true };
+  }
+
+  async getGroupMonthSheets(params: {
+    requesterUserId: string;
+    requesterRole: Role;
+    groupId: string;
+    dto: GetGroupMonthSheetsDto;
+  }) {
+    const { requesterUserId, requesterRole, groupId, dto } = params;
+
+    // 1) Group mavjudligini tekshirish (ham teacher, ham admin uchun kerak)
+    const group = await this.prisma.group.findUnique({
+      where: { id: groupId },
+      include: { room: true },
+    });
+    if (!group) throw new NotFoundException('Group topilmadi');
+
+    // 2) Access control:
+    // - ADMIN bo‘lsa ruxsat
+    // - TEACHER bo‘lsa policy orqali groupga access borligini tekshiramiz
+    if (requesterRole === Role.TEACHER) {
+      await this.teacherPolicy.ensureTeacherHasAccessToGroupOrThrow({
+        teacherUserId: requesterUserId,
+        groupId,
+      });
+    } else if (requesterRole !== Role.ADMIN) {
+      throw new ForbiddenException('Ruxsat yo‘q');
+    }
+
+    // 3) month range
+    const { start, endExclusive } = this.monthRangeUtc(dto.month);
+
+    // 4) oy bo‘yicha sheetlarni olish
+    const whereSheet: any = {
+      groupId,
+      date: { gte: start, lt: endExclusive },
+    };
+    if (dto.lesson !== undefined) whereSheet.lesson = dto.lesson;
+
+    const sheets = await this.prisma.attendanceSheet.findMany({
+      where: whereSheet,
+      orderBy: [{ date: 'asc' }, { lesson: 'asc' }],
+      include: {
+        records: {
+          include: {
+            student: { include: { user: true } },
+          },
+        },
+      },
+    });
+
+    // 5) response: oyda nechta dars bo‘lgan bo‘lsa — sheets.length shuni bildiradi
+    return {
+      group: {
+        id: group.id,
+        name: group.name,
+        daysPattern: group.daysPattern,
+        startMinutes: group.startMinutes,
+        endMinutes: group.endMinutes,
+        room: group.room
+          ? {
+              id: group.room.id,
+              name: group.room.name,
+              capacity: group.room.capacity,
+            }
+          : null,
+      },
+      month: dto.month,
+      totalLessons: sheets.length,
+      sheets: sheets.map((s) => ({
+        sheetId: s.id,
+        date: s.date.toISOString().slice(0, 10),
+        lesson: s.lesson,
+        status: s.status,
+        students: s.records.map((r) => ({
+          studentId: r.studentId,
+          fullName: `${r.student.user.firstName} ${r.student.user.lastName}`,
+          status: r.status,
+          comment: r.comment,
+        })),
+      })),
+    };
   }
 }
