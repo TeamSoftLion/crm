@@ -14,7 +14,9 @@ cmds = ["npm install --legacy-peer-deps"]
 [build.nixpacksPlan.phases.build]
 cmds = ["npm run build"]
 
+
 [deploy]
-startCommand = "node scripts/safe-migrate.js & npm run start:prod"
+startCommand = "npm run prisma:migrate:deploy && npm run start:prod"
+
 
 
