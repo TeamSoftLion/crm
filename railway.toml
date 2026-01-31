@@ -15,5 +15,4 @@ cmds = ["npm install --legacy-peer-deps"]
 cmds = ["npm run build"]
 
 [deploy]
-# Container ishga tushganda bajariladigan komandalar
-startCommand = "npm run prisma:migrate:deploy && npm run start:prod"
+startCommand = "node scripts/safe-migrate.js && npm run start:prod"
