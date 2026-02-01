@@ -22,7 +22,8 @@ async function bootstrap() {
   app.useLogger(logger);
   const allowedOrigins = [
     'http://localhost:5173',
-    'https://team-soft-scm-zarbdor.vercel.app',
+    // 'https://team-soft-scm-zarbdor.vercel.app',
+    'https://team-soft-crm.vercel.app',
     // 'https://team-soft-crm-git-main-timurs-projects-7ecfe3bd.vercel.app',
     // 'https://team-soft-f0szvdv1p-timurs-projects-7ecfe3bd.vercel.app',
   ];
