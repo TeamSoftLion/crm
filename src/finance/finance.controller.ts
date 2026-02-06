@@ -8,6 +8,7 @@ import {
   Query,
   UseGuards,
   Req,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { FinanceService } from './finance.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
@@ -20,10 +21,7 @@ import { Roles } from 'src/auth/decorator/roles.decorator';
 import { ApplyDiscountDto } from './dto/apply-discount.dto';
 
 interface AuthRequest extends Request {
-  user: {
-    userId: string;
-    role: Role;
-  };
+  user: { userId: string; role: Role };
 }
 
 @Controller('finance')
@@ -31,43 +29,65 @@ interface AuthRequest extends Request {
 export class FinanceController {
   constructor(private readonly financeService: FinanceService) {}
 
+  // 1. To'lov qabul qilish (Endi tranzaksiya bilan ishlaydi)
   @Post('payments')
   @Roles(Role.ADMIN, Role.MANAGER)
   async createPayment(@Body() dto: CreatePaymentDto, @Req() req: AuthRequest) {
-    const recordedById = req.user.userId;
-    return this.financeService.createPayment(dto, recordedById);
+    return this.financeService.createPayment(dto, req.user.userId);
   }
 
+  // 2. Xarajatlar (Chiqim)
   @Post('expenses')
   @Roles(Role.ADMIN, Role.MANAGER)
   async createExpense(@Body() dto: CreateExpenseDto, @Req() req: AuthRequest) {
-    const recordedById = req.user.userId;
-    return this.financeService.createExpense(dto, recordedById);
+    return this.financeService.createExpense(dto, req.user.userId);
   }
+
+  // 3. Chegirma berish
   @Post('discount')
   @Roles(Role.ADMIN, Role.MANAGER)
   async applyDiscount(@Body() dto: ApplyDiscountDto) {
     return this.financeService.applyDiscount(dto);
   }
 
+  // 4. Guruh bo'yicha to'lov hisoboti (Darslar soni bilan)
+  @Get('groups/:groupId/charges')
+  @Roles(Role.ADMIN, Role.MANAGER)
+  async getGroupCharges(
+    @Param('groupId') groupId: string,
+    @Query('year', ParseIntPipe) year: number,
+    @Query('month', ParseIntPipe) month: number,
+  ) {
+    return this.financeService.getGroupCharges(groupId, year, month);
+  }
+
+  // 5. Qarzdorlar ro'yxati
   @Get('debtors')
   @Roles(Role.ADMIN, Role.MANAGER)
   async getDebtors(@Query('minDebt') minDebt?: string) {
-    const value = minDebt ? Number(minDebt) : 0;
-    return this.financeService.getDebtors(value);
+    return this.financeService.getDebtors(minDebt ? Number(minDebt) : 0);
   }
-  @Get('students/:id/summary')
+
+  // 6. O'quvchi balansi va MonthCharges (Siz xohlagan qism)
+  // GET /finance/students/uuid
+  @Get('students/summary/:id')
   @Roles(Role.ADMIN, Role.MANAGER)
   async getStudentSummary(@Param('id') studentId: string) {
     return this.financeService.getStudentSummary(studentId);
   }
+  @Get('students/history/:id')
+  async getStudentFinanceHistory(@Param('id') studentId: string) {
+    return this.financeService.getStudentTotalHistory(studentId);
+  }
 
+  // 7. Umumiy kassa (Aggregate qilingan Dashboard)
   @Get('balance')
   @Roles(Role.ADMIN, Role.MANAGER)
   async getGlobalBalance() {
     return this.financeService.getGlobalBalance();
   }
 
+  // 8. Davrlar bo'yicha moliya overview
   @Get('overview')
   @Roles(Role.ADMIN, Role.MANAGER)
   async getOverview(
@@ -77,9 +97,8 @@ export class FinanceController {
   ) {
     const fromDate = from
       ? new Date(from)
-      : new Date(new Date().getFullYear(), 0, 1); // yil boshidan
-    const toDate = to ? new Date(to) : new Date(); // bugungacha
-
+      : new Date(new Date().getFullYear(), 0, 1);
+    const toDate = to ? new Date(to) : new Date();
     return this.financeService.getFinanceOverview(fromDate, toDate, method);
   }
 }
